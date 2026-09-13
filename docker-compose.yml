@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-joblens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-joblens}
+      POSTGRES_DB: ${POSTGRES_DB:-joblens}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/002-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-joblens} -d ${POSTGRES_DB:-joblens}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-joblens}:${POSTGRES_PASSWORD:-joblens}@postgres:5432/${POSTGRES_DB:-joblens}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      BASE_RESUME_PATH: ${BASE_RESUME_PATH:-/data/user/resume.pdf}
+      OUTPUT_DIR: ${OUTPUT_DIR:-/data/generated}
+      COMPANY_BOARDS_PATH: ${COMPANY_BOARDS_PATH:-/data/user/company_boards.json}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    environment:
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-change-me}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change-this-to-a-long-random-string}
+      GENERIC_TIMEZONE: ${TZ:-Europe/Amsterdam}
+      JOBLENS_API_URL: http://api:8000
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./data:/data
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:
+  n8n_data:

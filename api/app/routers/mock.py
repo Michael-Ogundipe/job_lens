@@ -1,0 +1,80 @@
+from fastapi import APIRouter
+from datetime import datetime, timedelta, timezone
+
+router = APIRouter()
+
+@router.get("/jobs")
+def mock_jobs():
+    now = datetime.now(timezone.utc)
+    return [
+        {
+            "external_id": "demo-flutter-001",
+            "source": "demo",
+            "source_url": "https://example.com/jobs/demo-flutter-001",
+            "application_url": "https://example.com/jobs/demo-flutter-001",
+            "company": "Example Technologies",
+            "company_url": "https://example.com",
+            "title": "Senior Flutter Engineer",
+            "description": "Build mobile applications using Flutter and Dart. Experience with Firebase, REST APIs and production mobile apps is valuable.",
+            "location": "Remote",
+            "remote": True,
+            "employment_type": "full-time",
+            "posted_at": now - timedelta(days=5),
+        },
+        {
+            "external_id": "demo-react-002",
+            "source": "demo",
+            "source_url": "https://example.com/jobs/demo-react-002",
+            "application_url": "https://example.com/jobs/demo-react-002",
+            "company": "Example Mobile",
+            "company_url": "https://example.com",
+            "title": "Senior React Native Engineer",
+            "description": "Lead React Native and TypeScript development for consumer mobile applications.",
+            "location": "Remote",
+            "remote": True,
+            "employment_type": "full-time",
+            "posted_at": now - timedelta(days=12),
+        },
+        {
+            "external_id": "demo-backend-003",
+            "source": "demo",
+            "source_url": "https://example.com/jobs/demo-backend-003",
+            "application_url": "https://example.com/jobs/demo-backend-003",
+            "company": "Example Cloud",
+            "company_url": "https://example.com",
+            "title": "Senior Backend Engineer",
+            "description": "Build Go services, Kubernetes infrastructure and AWS systems.",
+            "location": "Remote",
+            "remote": True,
+            "employment_type": "full-time",
+            "posted_at": now - timedelta(days=3),
+        },
+        {
+            "external_id": "demo-expired-004",
+            "source": "demo",
+            "source_url": "https://example.com/jobs/demo-expired-004",
+            "application_url": None,
+            "company": "Example Old Co",
+            "company_url": "https://example.com",
+            "title": "Senior Mobile Engineer",
+            "description": "Mobile engineering position.",
+            "location": "Remote",
+            "remote": True,
+            "employment_type": "full-time",
+            "posted_at": now - timedelta(days=75),
+        },
+        {
+            "external_id": "demo-duplicate-001",
+            "source": "demo-copy",
+            "source_url": "https://example.com/jobs/demo-duplicate-001",
+            "application_url": "https://example.com/jobs/demo-flutter-001",
+            "company": "Example Technologies",
+            "company_url": "https://example.com",
+            "title": " Senior Flutter Engineer ",
+            "description": "Build mobile applications using Flutter and Dart. Experience with Firebase, REST APIs and production mobile apps is valuable.",
+            "location": "Remote",
+            "remote": True,
+            "employment_type": "full-time",
+            "posted_at": now - timedelta(days=5),
+        },
+    ]

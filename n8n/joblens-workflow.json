@@ -1,0 +1,433 @@
+{
+  "name": "JobLens - Job Search Pipeline",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "12",
+      "name": "Daily Schedule (8am)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "manual-job",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "13",
+      "name": "Manual Job Inbox (LinkedIn, etc.)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        340
+      ],
+      "webhookId": "joblens-manual-job"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body || $json || {};\nconst title = (body.title || '').toString().trim();\nconst company = (body.company || '').toString().trim();\nconst application_url = body.application_url || body.url || null;\nconst now = new Date().toISOString();\nconst slug = `${company}-${title}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');\nconst job = {\n  external_id: body.external_id || slug || `manual-${Date.now()}`,\n  source: body.source || 'manual',\n  source_url: body.source_url || application_url,\n  application_url: application_url,\n  company: company,\n  company_url: body.company_url || null,\n  title: title,\n  description: body.description || '',\n  location: body.location || null,\n  remote: !!body.remote,\n  employment_type: body.employment_type || null,\n  posted_at: body.posted_at || now,\n};\nreturn [{ json: job }];"
+      },
+      "id": "14",
+      "name": "Prepare Manual Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://api:8000/api/discover/jobs?max_age_days=3&remote_only=false&exclude_seen=true",
+        "options": {}
+      },
+      "id": "2",
+      "name": "Discover Real Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst jobs = items.map(i => i.json);\nconst seen = new Set();\nconst output = [];\nfor (const job of jobs) {\n  const key = (job.application_url || `${job.company}|${job.title}`).toLowerCase().trim();\n  if (seen.has(key)) continue;\n  seen.add(key);\n  output.push({ json: job });\n}\nconsole.log(`[JobLens Debug] Deduplicate Jobs: ${items.length} in -> ${output.length} out`);\nreturn output;"
+      },
+      "id": "3",
+      "name": "Deduplicate Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/api/job/normalize",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "4",
+      "name": "Normalize Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/api/job/validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {}
+      },
+      "id": "5",
+      "name": "Verify Active",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "id": "6",
+      "name": "Active Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Keep a job if it has the required fields + an application URL.\n// Validation result is attached for confidence/reference only - it does NOT gate inclusion.\nconst REQUIRED_FIELDS = ['title', 'company', 'location', 'source', 'posted_at'];\nconst items = $input.all();\nconst output = [];\nlet dropped = 0;\n\nfor (const item of items) {\n  const job = item.json;\n  const hasRequired = REQUIRED_FIELDS.every(\n    f => job[f] !== undefined && job[f] !== null && String(job[f]).trim() !== ''\n  );\n  const hasRemoteField = job.remote !== undefined && job.remote !== null; // false is a valid value\n  const hasApplicationUrl = !!job.application_url;\n\n  if (hasRequired && hasRemoteField && hasApplicationUrl) {\n    output.push(item);\n  } else {\n    dropped++;\n  }\n}\n\nconsole.log(`[JobLens Debug] Active Only: ${items.length} in -> ${output.length} out (dropped ${dropped} missing required fields/application URL; validation status NOT used to filter)`);\nreturn output;"
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nreturn items.map(({ json }) => {\n  const job = json.job || json;\n\n  return { json: {\n    'Job Title': job.title || json.title || '',\n    'Company': job.company || json.company || '',\n    'Location': job.location || json.location || '',\n    'Remote': (job.remote ?? json.remote) ? 'Yes' : 'No',\n    'Source': job.source || json.source || '',\n    'Posted': job.posted_at || json.posted_at || '',\n    'Application': job.application_url || json.application_url || '',\n  }};\n});\n"
+      },
+      "id": "prepare-google-sheet-row",
+      "name": "Prepare Google Sheet Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Jobs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "add-jobs-google-sheets",
+      "name": "Add Jobs to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconsole.log(`[JobLens Debug] After Discover Real Jobs: ${items.length} job(s)`);\nreturn items;"
+      },
+      "id": "log-1-discover",
+      "name": "Log: After Discover Real Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        330,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconsole.log(`[JobLens Debug] After Deduplicate Jobs: ${items.length} job(s)`);\nreturn items;"
+      },
+      "id": "log-2-dedup",
+      "name": "Log: After Deduplicate Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        550,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconsole.log(`[JobLens Debug] After Normalize Job: ${items.length} job(s)`);\nreturn items;"
+      },
+      "id": "log-3-normalize",
+      "name": "Log: After Normalize Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        770,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconsole.log(`[JobLens Debug] After Verify Active: ${items.length} job(s)`);\nreturn items;"
+      },
+      "id": "log-4-verify",
+      "name": "Log: After Verify Active",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        990,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconsole.log(`[JobLens Debug] After Active Only: ${items.length} job(s)`);\nreturn items;"
+      },
+      "id": "log-5-active-only",
+      "name": "Log: After Active Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1210,
+        -80
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Discover Real Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Schedule (8am)": {
+      "main": [
+        [
+          {
+            "node": "Discover Real Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Job Inbox (LinkedIn, etc.)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Manual Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Manual Job": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discover Real Jobs": {
+      "main": [
+        [
+          {
+            "node": "Log: After Discover Real Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate Jobs": {
+      "main": [
+        [
+          {
+            "node": "Log: After Deduplicate Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Job": {
+      "main": [
+        [
+          {
+            "node": "Log: After Normalize Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Active": {
+      "main": [
+        [
+          {
+            "node": "Log: After Verify Active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Active Only": {
+      "main": [
+        [
+          {
+            "node": "Log: After Active Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Google Sheet Row": {
+      "main": [
+        [
+          {
+            "node": "Add Jobs to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: After Discover Real Jobs": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: After Deduplicate Jobs": {
+      "main": [
+        [
+          {
+            "node": "Normalize Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: After Normalize Job": {
+      "main": [
+        [
+          {
+            "node": "Verify Active",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: After Verify Active": {
+      "main": [
+        [
+          {
+            "node": "Active Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log: After Active Only": {
+      "main": [
+        [
+          {
+            "node": "Prepare Google Sheet Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "joblens-full-v4"
+}

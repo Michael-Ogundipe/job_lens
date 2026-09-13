@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+data/generated/*
+data/logs/*
+data/user/.resume_profile_cache.json
+!data/generated/.gitkeep
+!data/logs/.gitkeep
